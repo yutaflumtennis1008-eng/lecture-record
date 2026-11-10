@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>録画する講演を選ぶ</title>
+<style>
+  :root { --bg: #F5F7F6; --card: #FFFFFF; --text: #1C2421; --sub: #5D6A65; --line: #DDE3E0; --accent: #1F6F5C;
+          --ok: #1F6F5C; --ng: #B03A2E; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151A18; --card: #1E2522; --text: #E8EEEB; --sub: #A3B0AB; --line: #2E3834; --accent: #5CC2A6;
+            --ok: #5CC2A6; --ng: #F08A7E; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; font-size: 16px; line-height: 1.5; }
+  header { padding: 16px; }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .lead { margin: 0; color: var(--sub); font-size: 14px; }
+  main { padding: 0 12px 96px; }
+  h2 { margin: 20px 4px 8px; font-size: 15px; color: var(--sub); }
+  .row { display: flex; gap: 12px; align-items: flex-start; background: var(--card); border: 1px solid var(--line);
+         border-radius: 12px; padding: 12px; margin-bottom: 8px; }
+  .row input { width: 24px; height: 24px; margin-top: 2px; flex: none; accent-color: var(--accent); }
+  .row label { flex: 1; min-width: 0; }
+  .title { display: block; font-weight: 600; word-break: break-word; }
+  .meta { display: block; color: var(--sub); font-size: 13px; }
+  .note { display: block; font-size: 13px; color: var(--sub); }
+  .note.ok { color: var(--ok); }
+  .note.ng { color: var(--ng); }
+  .row.off { opacity: .6; }
+  .msg { margin: 16px 4px; color: var(--sub); }
+  footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+           background: var(--bg); border-top: 1px solid var(--line); }
+  button { width: 100%; padding: 14px; border: 0; border-radius: 12px; background: var(--accent); color: #fff;
+           font-size: 17px; font-weight: 700; }
+  button:disabled { opacity: .45; }
+</style>
+</head>
+<body>
+<header>
+  <h1>録画する講演を選ぶ</h1>
+  <p class="lead">選んだ講演は、視聴と一緒に録画して、終わった後にスライドのまとめをメールで届けます。開始時刻まで変えられます。</p>
+</header>
+<main id="list"><p class="msg" id="msg">読み込み中…</p></main>
+<footer><button id="save" disabled>保存</button></footer>
+<script>
+"use strict";
+// GAS のウェブアプリ（JSON を返す API）。鍵はページに入れず、LINE のカードのリンク（?k=）で受け取る。
+const API_URL = "";
+
+const REASONS = {
+  zoom_auto: "Zoom（自動で録画します）",
+  blocked_site: "このサイトは録画できません",
+  started: "開始済みのため変えられません",
+};
+const ERRORS = {
+  limit: "同じ時間に選べるのは{max}本までです",
+  zoom_overlap: "Zoom の講演と時間が重なるため選べません",
+  started: "開始済みのため変えられません",
+  too_far: "7日より先は選べません",
+  blocked_site: "このサイトは録画できません",
+  zoom: "Zoom の講演は自動で録画します",
+  not_lecture: "講演の予定が見つかりません",
+  forbidden: "開き方が正しくありません",
+};
+
+const key = new URLSearchParams(location.search).get("k") || "";
+const listEl = document.getElementById("list");
+const saveBtn = document.getElementById("save");
+let rows = [];
+let maxParallel = 3;
+
+function say(text) {
+  listEl.textContent = "";
+  const p = document.createElement("p");
+  p.className = "msg";
+  p.textContent = text;
+  listEl.appendChild(p);
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function render(lectures) {
+  listEl.textContent = "";
+  rows = [];
+  if (!lectures.length) { say("7日先までにライブ講演の予定はありません。"); return; }
+  let day = "";
+  lectures.forEach(lec => {
+    if (lec.day !== day) { day = lec.day; listEl.appendChild(el("h2", "", day)); }
+    const row = el("div", "row" + (lec.selectable ? "" : " off"));
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = "c" + rows.length;
+    box.checked = !!lec.selected;
+    box.disabled = !lec.selectable;
+    const label = document.createElement("label");
+    label.htmlFor = box.id;
+    label.appendChild(el("span", "title", lec.title));
+    label.appendChild(el("span", "meta", lec.time + "・" + lec.site));
+    const note = el("span", "note", lec.selectable ? "" : (REASONS[lec.reason] || ""));
+    label.appendChild(note);
+    row.appendChild(box);
+    row.appendChild(label);
+    listEl.appendChild(row);
+    const r = { lec: lec, box: box, note: note, saved: !!lec.selected };
+    box.addEventListener("change", () => { note.textContent = ""; note.className = "note"; refresh(); });
+    rows.push(r);
+  });
+  refresh();
+}
+
+function changed() { return rows.filter(r => !r.box.disabled && r.box.checked !== r.saved); }
+function refresh() { saveBtn.disabled = changed().length === 0; }
+
+async function load() {
+  if (!key) { say("開き方が正しくありません。LINE のカードの「録画を選ぶ」から開いてください。"); return; }
+  if (!API_URL) { say("準備中です。"); return; }
+  try {
+    const res = await fetch(API_URL + "?action=lectures&k=" + encodeURIComponent(key));
+    const data = await res.json();
+    if (!data.ok) { say(data.error === "forbidden" ? ERRORS.forbidden + "。LINE のカードから開き直してください。" : "読み込めませんでした。"); return; }
+    if (data.maxParallel) maxParallel = data.maxParallel;
+    render(data.lectures || []);
+  } catch (e) {
+    say("読み込めませんでした。電波の良い所で開き直してください。");
+  }
+}
+
+async function save() {
+  const todo = changed();
+  if (!todo.length) return;
+  saveBtn.disabled = true;
+  saveBtn.textContent = "保存中…";
+  for (const r of todo) {
+    const on = r.box.checked;
+    try {
+      const res = await fetch(API_URL, { method: "POST", body: JSON.stringify({ k: key, action: "select", id: r.lec.id, on: on }) });
+      const data = await res.json();
+      if (data.ok) {
+        r.saved = on;
+        r.note.textContent = on ? "録画に選びました" : "選ぶのをやめました";
+        r.note.className = "note ok";
+      } else {
+        r.box.checked = r.saved;
+        r.note.textContent = (ERRORS[data.error] || "保存できませんでした").replace("{max}", maxParallel);
+        r.note.className = "note ng";
+      }
+    } catch (e) {
+      r.box.checked = r.saved;
+      r.note.textContent = "保存できませんでした（通信）";
+      r.note.className = "note ng";
+    }
+  }
+  saveBtn.textContent = "保存";
+  refresh();
+}
+
+saveBtn.addEventListener("click", save);
+load();
+</script>
+</body>
+</html>
